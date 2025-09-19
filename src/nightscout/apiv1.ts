@@ -50,6 +50,11 @@ export class Client implements NightscoutAPI
             device: this.device,
             date: e.date.getTime(),
             dateString: e.date.toISOString(),
+            sensorInfo: {
+                serialNumber: e.sensor_serial_number,
+                activationTimeEpoch: e.sensor_activation_time_epoch,
+                error: e.sensor_info_error,
+            },
         }));
 
         const resp = await axios.post(url, entriesV1, {headers: this.headers});

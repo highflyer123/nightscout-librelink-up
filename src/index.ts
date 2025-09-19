@@ -287,19 +287,96 @@ const nightscoutClient = config.nightscoutApiV3
     ? new ClientV3(config)
     : new ClientV1(config);
 
+/**
+ * Find the active sensor for a given timestamp by comparing with sensor activation times
+ * @param activeSensors Array of active sensors with their activation times
+ * @param readingTimestamp Timestamp of the glucose reading
+ * @returns Object with serial number and activation time of the sensor that was active at the time
+ * @throws Error if no active sensor can be found or if sensor data is invalid
+ */
+function findActiveSensorInfo(activeSensors: { sensor: { sn: string; a: number } }[], readingTimestamp: Date): { sn: string; activationTime: number }
+{
+    if (!activeSensors || activeSensors.length === 0)
+    {
+        throw new Error("No active sensors available");
+    }
+    
+    const readingTime = readingTimestamp.getTime() / 1000; // Convert to Unix timestamp (seconds)
+    
+    // Sort sensors by activation time (newest first)
+    const sortedSensors = activeSensors
+        .map(activeSensor => {
+            if (!activeSensor.sensor || !activeSensor.sensor.sn || typeof activeSensor.sensor.a !== 'number')
+            {
+                throw new Error("Invalid sensor data structure");
+            }
+            return {
+                sn: activeSensor.sensor.sn,
+                activationTime: activeSensor.sensor.a
+            };
+        })
+        .sort((a, b) => b.activationTime - a.activationTime);
+    
+    // Find the sensor that was active at the time of the reading
+    // The active sensor is the one with the latest activation time that is still before or at the reading time
+    for (const sensor of sortedSensors)
+    {
+        if (sensor.activationTime <= readingTime)
+        {
+            return { sn: sensor.sn, activationTime: sensor.activationTime };
+        }
+    }
+    
+    // If no sensor activation time matches, throw an error
+    throw new Error(`No sensor found active at timestamp ${readingTimestamp.toISOString()}`);
+}
+
 export async function createFormattedMeasurements(measurementData: GraphData): Promise<Entry[]>
 {
     const formattedMeasurements: Entry[] = [];
     const glucoseMeasurement = measurementData.connection.glucoseMeasurement;
     const measurementDate = getUtcDateFromString(glucoseMeasurement.FactoryTimestamp);
     const lastEntry = config.allData ? null : await nightscoutClient.lastEntry();
+    
+    // Get the latest sensor from activeSensors (the one with the most recent activation time)
+    let latestActiveSensor: { sn: string; a: number } | null = null;
+    let currentSerialNumber: string | undefined = undefined;
+    let currentActivationTime: number | undefined = undefined;
+    let isConnectionSensorValid = false;
+    let sensorInfoError: string | undefined = undefined;
+    
+    try
+    {
+        latestActiveSensor = measurementData.activeSensors
+            .map(activeSensor => activeSensor.sensor)
+            .sort((a, b) => b.a - a.a)[0]; // Sort by activation time (newest first) and take the first
+        
+        // Validate that the connection sensor matches the latest active sensor
+        const connectionSensorSn = measurementData.connection.sensor.sn;
+        isConnectionSensorValid = latestActiveSensor && latestActiveSensor.sn === connectionSensorSn;
+        if (!isConnectionSensorValid)
+            throw new Error("Connection.sensor field does not match any sensor found in the activeSensors field");
+
+        // Find the active sensor for the most recent measurement
+        const sensorInfo = findActiveSensorInfo(measurementData.activeSensors, measurementDate);
+        currentSerialNumber = sensorInfo.sn;
+        currentActivationTime = sensorInfo.activationTime;
+    }
+    catch (error)
+    {
+        sensorInfoError = `Error: ${error instanceof Error ? error.message : 'Unknown sensor error'}`;
+    }
+    
     // Add the most recent measurement first
     if (lastEntry === null || measurementDate > lastEntry.date)
     {
         formattedMeasurements.push({
             date: measurementDate,
             direction: mapTrendArrow(glucoseMeasurement.TrendArrow),
-            sgv: glucoseMeasurement.ValueInMgPerDl
+            sgv: glucoseMeasurement.ValueInMgPerDl,
+            sensor_serial_number: currentSerialNumber,
+            sensor_activation_time_epoch: currentActivationTime,
+            sensor_info_error: sensorInfoError,
         });
     }
 
@@ -308,9 +385,28 @@ export async function createFormattedMeasurements(measurementData: GraphData): P
         const entryDate = getUtcDateFromString(glucoseMeasurementHistoryEntry.FactoryTimestamp);
         if (lastEntry === null || entryDate > lastEntry.date)
         {
+            // Find the active sensor for this historical measurement
+            let historicalSerialNumber: string | undefined = undefined;
+            let historicalActivationTime: number | undefined = undefined;
+            sensorInfoError = undefined;
+            
+            try
+            {
+                const historicalSensorInfo = findActiveSensorInfo(measurementData.activeSensors, entryDate);
+                historicalSerialNumber = historicalSensorInfo.sn;
+                historicalActivationTime = historicalSensorInfo.activationTime;
+            }
+            catch (error)
+            {
+                sensorInfoError = `Error: ${error instanceof Error ? error.message : 'Unknown sensor error'}`;
+            }
+            
             formattedMeasurements.push({
                 date: entryDate,
                 sgv: glucoseMeasurementHistoryEntry.ValueInMgPerDl,
+                sensor_serial_number: historicalSerialNumber,
+                sensor_activation_time_epoch: historicalActivationTime,
+                sensor_info_error: sensorInfoError,
             });
         }
     });

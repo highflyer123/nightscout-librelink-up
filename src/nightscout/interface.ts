@@ -19,6 +19,9 @@ export interface Entry {
 	date: Date;
 	sgv: number;
 	direction?: Direction;
+	sensor_serial_number?: string;
+	sensor_activation_time_epoch?: number;
+	sensor_info_error?: string;
 }
 
 export enum Direction {
