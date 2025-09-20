@@ -24,7 +24,7 @@ jobs:
         with:
           push: true
           platforms: linux/amd64,linux/arm64,linux/arm/v7
-          tags: timoschlueter/nightscout-librelink-up:dev
+          tags: highflyer123/nightscout-librelink-up:dev
       - name: Docker Build and Push (Tagged)
         if: startsWith(github.ref, 'refs/tags/')
         id: docker_build_tagged
@@ -32,7 +32,7 @@ jobs:
         with:
           push: true
           platforms: linux/amd64,linux/arm64,linux/arm/v7
-          tags: timoschlueter/nightscout-librelink-up:${{github.ref_name}},timoschlueter/nightscout-librelink-up:latest
+          tags: highflyer123/nightscout-librelink-up:${{github.ref_name}},highflyer123/nightscout-librelink-up:latest
       - name: Docker Image digest
         if: startsWith(github.ref, 'refs/tags/')
         run: echo ${{ steps.docker_build.outputs.digest }}
